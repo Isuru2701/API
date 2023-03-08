@@ -178,6 +178,18 @@ def update():
 
     kon.close()
 
+    return jsonify(
+        {
+            'user_id': user_id,
+            'date': date,
+            'sentiment': score['sentiment'],
+            'negative_possibility': negative_possibility['possibility'],
+            'positive_possibility': positive_possibility['possibility'],
+            'last_call': last_call
+
+        }
+    )
+
 
 # https://aclanthology.org/L16-1590.pdf
 # https://www.researchgate.net/publication/362586153_Natural_Language_Processing_for_Mental_Disorders_An_Overview
