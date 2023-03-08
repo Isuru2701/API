@@ -1,0 +1,5 @@
+spacy
+nltk
+flask
+pyodbc
+flask_apscheduler
