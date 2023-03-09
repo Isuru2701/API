@@ -279,4 +279,4 @@ def tag(core, row, user_id, date, table):
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=777)
+    app.run()
