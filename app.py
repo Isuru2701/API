@@ -9,7 +9,8 @@ from nltk.sentiment import SentimentIntensityAnalyzer
 
 # api modules
 from flask import Flask, request, jsonify
-import pyodbc
+
+import pymssql
 from collections import Counter
 from flask_apscheduler import APScheduler
 import time
@@ -22,6 +23,7 @@ try:
     nlp = spacy.load("en_core_web_lg")
 except:
     spacy.cli.download("en_core_web_lg")
+    nlp = spacy.load("en_core_web_lg")
 
 try:
 
@@ -30,12 +32,13 @@ try:
 
 except:
     nltk.download('all')
+    stop = set(stopwords.words("english"))
+    sia = SentimentIntensityAnalyzer()
 
-kon_str = "Driver={ODBC Driver 17 for SQL Server};Server=celestelunar.database.windows.net;Database=Lunar;Uid=isuru;Pwd=#Spagetthi;Encrypt=yes;TrustServerCertificate=no;Connection Timeout=30;"
 
 
 # structure first instance of table
-# kon = pyodbc.connect(kon_str)
+# kon = pymssql.connect(kon_str)
 # cursor = kon.cursor()
 # cursor.execute("Select enduser_id, entry_date, content from user_entries")
 #
@@ -44,13 +47,14 @@ kon_str = "Driver={ODBC Driver 17 for SQL Server};Server=celestelunar.database.w
 app = Flask(__name__)
 
 # # init scheduler
+# # !!deprecated!!
 # scheduler = APScheduler()
 #
 # iteration = 1
 #
 
 # def listen():
-#     kon = pyodbc.connect(kon_str)
+#     kon = pymssql.connect(kon_str)
 #     cursor = kon.cursor()
 #     cursor.execute("Select enduser_id, entry_date, content from user_entries")
 #     table = cursor.fetchall()
@@ -83,18 +87,40 @@ app = Flask(__name__)
 # scheduler.init_app(app)
 # scheduler.start()
 
+server = "celestelunar.database.windows.net"
+database = "Lunar"
+username = "isuru"
+password = "#Spagetthi"
+
+kon = pymssql.connect(server=server, user=username, password=password, database=database)
+
+
 
 last_call = datetime.now()
+last_exception = None
 
 @app.route("/")
 def home():
+    flag = True
+    try:
+        kon = pymssql.connect(server=server, user=username, password=password, database=database)
+        cursor = kon.cursor()
+
+    except:
+        flag = False
+
+    finally:
+        kon.close()
+
     return jsonify(
         {
             'App': 'Twilight for Celeste',
             'Author': 'Isuru Yahampath (https://github.com/Isuru2701)',
             'Version': '1.0.0 - beta',
             'NLP modules used': 'spacy | nltk.corpus | nltk.sentiment',
-            'Last Call': last_call
+            'Last Call': last_call,
+            'Last Exception': last_exception,
+            'DB CONN': flag
         }
     )
 
@@ -130,22 +156,21 @@ def update():
     user_id = request.args.get('user')
     date = request.args.get('date')
 
-    kon = pyodbc.connect(kon_str)
+    kon = pymssql.connect(server=server, user=username, password=password, database=database)
     cursor = kon.cursor()
 
-    cursor.execute(f"Select content from user_entries where enduser_id= ? AND entry_date = ? ", user_id, date)
+    params = (user_id, date)
+    cursor.execute("Select content from user_entries where enduser_id= %d AND entry_date = %s ", params)
     row = cursor.fetchone()
-
-    # perform sent-analysis
     score = sentiment(row[0], user_id, date)
 
     # Delete any pre-existing ones cuz this is called if the content is changed
     if score['sentiment']:
-        cursor.execute(f"Delete from user_score where enduser_id= ? and entry_date= ?", user_id, date)
-        cursor.commit()
-        values = (score['user_id'], score['date'], score['sentiment'])
-        cursor.execute(f"insert into user_score values(?,?,?)", values)
-        cursor.commit()
+        cursor.execute("Delete from user_score where enduser_id= %d and entry_date= %s", params)
+        kon.commit()
+        params = (score['user_id'], score['sentiment'], score['date'])
+        cursor.execute("insert into user_score values(%d,%s,%d)",params)
+        kon.commit()
 
     # Negatives, if any
     seed = ['depression', 'physical abuse', 'addiction', 'loneliness', 'loss', 'stress', 'injury', 'trauma',
@@ -153,26 +178,31 @@ def update():
 
     negative_possibility = tag(seed, row, user_id, date, 'triggers')
 
-    cursor.execute(f"Delete from user_triggers where enduser_id= ? and entry_date= ?", user_id, date)
-    cursor.commit()
+    params = (user_id, date)
+    cursor.execute("Delete from user_triggers where enduser_id= %d and entry_date= %s", params)
+    kon.commit()
+
     values = (user_id, negative_possibility['possibility'], date)
 
     if values[1] is not None:
-        cursor.execute("Insert into user_triggers values(?, ?, ?)", values)
-        cursor.commit()
+        
+        cursor.execute("Insert into user_triggers values(%d, %d, %s)", values)
+        kon.commit()
 
     # Positives, if any
     seed = ['happy', 'love', 'cared for', 'friends', 'self-love', 'secure', 'recognized', 'healthy', 'exercise']
     positive_possibility = tag(seed, row, user_id, date, 'comforts')
 
-    cursor.execute(f"Delete from user_comforts where enduser_id= ? and entry_date= ?", user_id, date)
-    cursor.commit()
+    params = (user_id, date)
+    cursor.execute("Delete from user_comforts where enduser_id= %d and entry_date= %s", params)
+    kon.commit()
 
     values = (user_id, positive_possibility['possibility'], date)
 
+
     if values[1] is not None:
-        cursor.execute("Insert into user_comforts values(?, ?, ?)", values)
-        cursor.commit()
+        cursor.execute("Insert into user_comforts values(%d, %d, %s)", values)
+        kon.commit()
 
     last_call = datetime.now()
 
@@ -196,7 +226,7 @@ def update():
 
 def tag(core, row, user_id, date, table):
     doc = nlp(str(row))
-    kon = pyodbc.connect(kon_str)
+    kon = pymssql.connect(server=server, user=username, password=password, database=database)
     cursor = kon.cursor()
 
     similar_words = []
@@ -210,7 +240,7 @@ def tag(core, row, user_id, date, table):
     try:
         first_elements = [t[0] for t in similar_words]
         element_counts = Counter(first_elements)
-        cursor.execute(f"select trigger_id from {table} where trigger_name = ?",
+        cursor.execute(f"select trigger_id from {table} where trigger_name = %d",
                        element_counts.most_common(1)[0][0])
 
         most_common_element = cursor.fetchone()

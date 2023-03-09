@@ -2,4 +2,5 @@ spacy
 nltk
 flask
 pyodbc
+pymssql
 flask_apscheduler
